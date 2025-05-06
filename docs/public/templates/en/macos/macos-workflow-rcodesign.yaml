@@ -1,0 +1,107 @@
+# Author: https://github.com/sabinayo
+# Documentation: https://sabinayo.github.io/codemagic-godot-pipeline/workflows/macos-workflow.html
+# Error report: https://github.com/sabinayo/codemagic-godot-pipeline/issues
+
+definitions:
+  environment:
+    godot_environment:
+      vars: &godot_variables
+        GODOT_VERSION: 4.4.1-stable
+        EXPORT_TYPE: debug
+        BUILD_DIRECTORY: /Users/builder/Downloads/builds/
+        GODOT_URL: https://github.com/godotengine/godot-builds/releases/download
+        GODOT: Godot.app/Contents/MacOS/Godot
+        PROJECT_PATH: /Users/builder/clone
+        EDITOR_DATA_DIRECTORY: /Users/builder/Library/Application Support/Godot
+        EXPORT_TEMPLATES_DIRECTORY: $EDITOR_DATA_DIRECTORY/export_templates
+  
+  scripts:
+    - &install_godot
+      name: Godot Installation
+      script: |
+        export FILE=Godot_v${GODOT_VERSION}_macos.universal.zip
+        export URL=${GODOT_URL}/${GODOT_VERSION}/${FILE}
+        curl -L "$URL" -o "$FILE" && unzip "$FILE"
+        rm "$FILE"
+    
+    - &install_godot_export_templates
+      name: Export templates installation
+      script: |
+        export FILE=Godot_v${GODOT_VERSION}_export_templates.tpz
+        export URL=${GODOT_URL}/${GODOT_VERSION}/${FILE}
+        curl -L "$URL" -o "$FILE" && unzip "$FILE"
+        rm "$FILE"
+
+        export TEMPLATES_VERSION=$(echo "$GODOT_VERSION" | sed 's/-/./')
+        export TEMPLATES_PATH=${DOSSIER_TEMPLATES}/$TEMPLATES_VERSION
+        mkdir -p "$TEMPLATES_PATH" && mv templates/* "$TEMPLATES_PATH"
+        rmdir templates
+        
+        mkdir -p "$BUILD_DIRECTORY"
+    
+    - &export_project
+      name: Project export
+      script: |
+        export EXPORT_PATH=$BUILD_DIRECTORY/$OUTPUT_FILE
+        "$GODOT" --headless --path "$PROJECT_PATH" --export-$EXPORT_TYPE "$EXPORT_PRESET" "$EXPORT_PATH"
+        echo "command: " $GODOT "--headless --path" $PROJECT_PATH "--export-"$EXPORT_TYPE "$EXPORT_PRESET" $EXPORT_PATH
+    
+    - &gather_files
+      name: File collection
+      script: |
+        zip -r "$BUILD_DIRECTORY/Godot_v${GODOT_VERSION}-${EXPORT_PRESET}_export.zip" $BUILD_DIRECTORY
+
+  artifacts:
+    - &zipped_export $BUILD_DIRECTORY/*.zip
+
+
+workflows:
+  godot-macos-workflow:
+    name: MacOS Export
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    working_directory: /Users/builder/Downloads
+    
+    environment:
+      groups:
+        - apple_credentials
+      vars:
+        <<: *godot_variables
+        OUTPUT_FILE: test.zip
+        EXPORT_PRESET: macOS
+    
+    scripts:
+      - *install_godot
+      - *install_godot_export_templates
+      - name: Export Configuration
+        script: |
+          export CREDENTIAL_PATH=/tmp/$CERTIFICATE_FILE_NAME
+          echo $GODOT_MACOS_CODESIGN_CERTIFICATE_FILE | base64 --decode > $CREDENTIAL_PATH
+          echo "GODOT_MACOS_CODESIGN_CERTIFICATE_FILE=$CREDENTIAL_PATH" >> $CM_ENV
+
+          export CREDENTIAL_PATH=/tmp/$PROVISIONING_PROFILE_NAME
+          echo $GODOT_MACOS_CODESIGN_PROVISIONING_PROFILE | base64 --decode > $CREDENTIAL_PATH
+          echo "GODOT_MACOS_CODESIGN_PROVISIONING_PROFILE=$CREDENTIAL_PATH" >> $CM_ENV
+
+          export FILE=apple-codesign-0.29.0-macos-universal.tar.gz
+          export RCODESIGN_URL=https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F0.29.0/$FILE
+          curl -L "$RCODESIGN_URL" -o "$FILE" && unzip "$FILE"
+          rm $FILE
+          export RCODESIGN_PATH=$(pwd)/$FILE
+          export SETTINGS_VERSION=$(echo "$GODOT_VERSION" | awk -F'[.-]' '{
+              if ($1 == 3) print "3";
+              else if ($2 == 0) print $1;
+              else print $1"."$2
+          }')
+          export GODOT_SETTINGS=${EDITOR_DATA_DIR}/editor_settings-${SETTINGS_VERSION}.tres
+          cat <<EOF > "$GODOT_SETTINGS"
+          [gd_resource type="EditorSettings"]
+
+          [resource]
+          export/macos/rcodesign = "$RCODESIGN_PATH"
+          EOF
+      - *export_project
+      - *gather_files
+
+    artifacts:
+      - *zipped_export

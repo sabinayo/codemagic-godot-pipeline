@@ -1,0 +1,8 @@
+# Node artifact files
+node_modules/
+
+
+# VitePress cache & build
+docs/.vitepress/.temp/
+docs/.vitepress/cache/
+docs/.vitepress/dist/

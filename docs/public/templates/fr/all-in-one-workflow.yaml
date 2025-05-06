@@ -1,0 +1,322 @@
+# Auteur : https://github.com/sabinayo
+# Documentation : https://sabinayo.github.io/codemagic-godot-pipeline/fr/workflows/all-in-one-workflow.html
+# Rapport d'erreur : https://github.com/sabinayo/codemagic-godot-pipeline/issues
+
+definitions:
+  environment:
+    environnement_godot:
+      vars: &variables_godot
+        VERSION_GODOT: 4.4.1-stable
+        TYPE_EXPORTATION: debug
+        REPERTOIRE_EXPORTATION: /Users/builder/Downloads/builds/
+        URL_GODOT: https://github.com/godotengine/godot-builds/releases/download
+        GODOT: Godot.app/Contents/MacOS/Godot
+        REPERTOIRE_PROJET: /Users/builder/clone
+        REPERTOIRE_DONNEES_EDITEUR: /Users/builder/Library/Application Support/Godot
+        REPERTOIRE_MODELES_EXPORTATION: $REPERTOIRE_DONNEES_EDITEUR/export_templates
+
+  scripts:
+    - &installation_godot
+      name: Installation de Godot
+      script: |
+        export FICHIER=Godot_v${VERSION_GODOT}_macos.universal.zip
+        export URL=$URL_GODOT/$VERSION_GODOT/$FICHIER
+        curl -L "$URL" -o "$FICHIER" && unzip "$FICHIER"
+        rm "$FICHIER"
+    
+    - &installation_modeles_exportation
+      name: Installation des modèles d'exportation
+      script: |
+        export FICHIER=Godot_v${VERSION_GODOT}_export_templates.tpz
+        export URL=$URL_GODOT/$VERSION_GODOT/$FICHIER
+        curl -L "$URL" -o "$FICHIER" && unzip "$FICHIER"
+        rm "$FICHIER"
+
+        export VERSION_MODELES=$(echo "$VERSION_GODOT" | sed 's/-/./')
+        export CHEMIN_MODELES=${REPERTOIRE_MODELES_EXPORTATION}/$VERSION_MODELES
+        mkdir -p "$CHEMIN_MODELES" && mv templates/* "$CHEMIN_MODELES"
+        rmdir templates
+        echo "CHEMIN_MODELES_EXPORTATION=$CHEMIN_MODELES" >> $CM_ENV
+        echo "VERSION_MODELES_EXPORTATION=$VERSION_MODELES" >> $CM_ENV
+        
+        mkdir -p "$REPERTOIRE_EXPORTATION"
+    
+    - &exportation_projet
+      name: Exportation du Projet
+      script: |
+        export CHEMIN_EXPORTATION=$REPERTOIRE_EXPORTATION/$FICHIER_DE_SORTIE
+        "$GODOT" --headless --path "$REPERTOIRE_PROJET" --export-$TYPE_EXPORTATION "$NOM_DU_PREREGLAGE" "$CHEMIN_EXPORTATION"
+        echo "command: " $GODOT "--headless --path" $REPERTOIRE_PROJET "--export-"$TYPE_EXPORTATION "$NOM_DU_PREREGLAGE" $CHEMIN_EXPORTATION
+
+    - &collecte_fichiers
+      name: Collecte des fichiers
+      script: |
+        zip -r "$REPERTOIRE_EXPORTATION/Godot_v${VERSION_GODOT}-${NOM_DU_PREREGLAGE}_export.zip" $REPERTOIRE_EXPORTATION
+
+  artifacts:
+    - &recuperation_exportation $REPERTOIRE_EXPORTATION/*.zip
+
+
+workflows:
+  # Config: clé de publication | clé de débogage | compilation Gradle
+  flux-godot-android:
+    name: Exportation pour Android
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    working_directory: /Users/builder/Downloads
+    
+    environment:
+      groups:
+        - identifiants_android
+        - android
+      java: 17
+      vars:
+        <<: *variables_godot
+        FICHIER_DE_SORTIE: test.apk
+        NOM_DU_PREREGLAGE: Android
+    
+    scripts:
+      - *installation_godot
+      - *installation_modeles_exportation
+      - name: Configuration de l'exportation
+        script: |
+          export CHEMIN_DEBUG_KEYSTORE=/tmp/debug.keystore 
+          echo $CLE_DE_DEBOGAGE | base64 --decode > $CHEMIN_DEBUG_KEYSTORE
+          echo "GODOT_ANDROID_KEYSTORE_DEBUG_PATH=$CHEMIN_DEBUG_KEYSTORE" >> $CM_ENV
+
+          export CHEMIN_RELEASE_KEYSTORE=/tmp/release.keystore 
+          echo $CLE_DE_PUBLICATION | base64 --decode > $CHEMIN_RELEASE_KEYSTORE
+          echo "GODOT_ANDROID_KEYSTORE_RELEASE_PATH=$CHEMIN_RELEASE_KEYSTORE" >> $CM_ENV
+          
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $CM_ENV
+
+          cd $REPERTOIRE_PROJET
+
+          mkdir -p android/build
+          unzip -o -d android/build "$CHEMIN_MODELES_EXPORTATION/android_source.zip"
+          touch android/build/.gdignore
+          echo "$VERSION_MODELES_EXPORTATION" > android/.build_version
+          echo $MANIFESTE_ANDROID | base64 --decode > android/build/AndroidManifest.xml
+      - *exportation_projet
+      - *collecte_fichiers
+
+    artifacts:
+      - *recuperation_exportation
+
+  # Config: Exportation non signée et signée
+  flux-godot-ios:
+    name: Exportation pour iOS
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    working_directory: /Users/builder/Downloads
+    
+    environment:
+      groups:
+        - identifiants_apple
+      xcode: latest
+      vars:
+        <<: *variables_godot
+        FICHIER_DE_SORTIE: test.ipa
+        NOM_DU_PREREGLAGE: iOS
+    
+    scripts:
+      - *installation_godot
+      - *installation_modeles_exportation
+      - *exportation_projet
+      - name: Configuration xcode-select
+        script: sudo xcode-select -switch /Applications/Xcode.app
+      - *collecte_fichiers
+
+    artifacts:
+      - *recuperation_exportation
+  
+  flux-godot-linux:
+    name: Exportation vers Linux
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    working_directory: /Users/builder/Downloads
+    
+    environment:
+      vars:
+        <<: *variables_godot
+        FICHIER_DE_SORTIE: test.x86_64
+        NOM_DU_PREREGLAGE: Linux
+
+    scripts:
+      - *installation_godot
+      - *installation_modeles_exportation
+      - *exportation_projet
+      - *collecte_fichiers
+
+    artifacts:
+      - *recuperation_exportation
+  
+  flux-godot-web:
+    name: Exportation vers le Web
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    working_directory: /Users/builder/Downloads
+    
+    environment:
+      vars:
+        <<: *variables_godot
+        FICHIER_DE_SORTIE: index.html
+        NOM_DU_PREREGLAGE: Web
+    
+    scripts:
+      - *installation_godot
+      - *installation_modeles_exportation
+      - *exportation_projet
+      - *collecte_fichiers
+
+    artifacts:
+      - *recuperation_exportation
+  
+  # Config: Exportation non signée | rcodesign | notarisation
+  flux-godot-macos:
+    name: Exportation macOS
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    working_directory: /Users/builder/Downloads
+    
+    environment:
+      groups:
+        - identifiants_apple
+      vars:
+        <<: *variables_godot
+        FICHIER_DE_SORTIE: test.zip
+        NOM_DU_PREREGLAGE: macOS
+    
+    scripts:
+      - *installation_godot
+      - *installation_modeles_exportation
+      - name: Configuration de l'exportation
+        script: |
+          export CHEMIN_IDENTIFIANT=/tmp/$GODOT_MACOS_CODESIGN_CERTIFICATE_FILE_NAME
+          echo $GODOT_MACOS_CODESIGN_CERTIFICATE_FILE | base64 --decode > $CHEMIN_IDENTIFIANT
+          echo "GODOT_MACOS_CODESIGN_CERTIFICATE_FILE=$CHEMIN_IDENTIFIANT" >> $CM_ENV
+
+          export CHEMIN_IDENTIFIANT=/tmp/$GODOT_MACOS_CODESIGN_PROVISIONING_PROFILE_NAME
+          echo $GODOT_MACOS_CODESIGN_PROVISIONING_PROFILE | base64 --decode > $CHEMIN_IDENTIFIANT
+          echo "GODOT_MACOS_CODESIGN_PROVISIONING_PROFILE=$CHEMIN_IDENTIFIANT" >> $CM_ENV
+
+          export FICHIER=apple-codesign-0.29.0-macos-universal.tar.gz
+          export URL=https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F0.29.0/$FICHIER
+          curl -L "$URL" -o "$FICHIER" && unzip "$FICHIER"
+          rm $FICHIER
+          export CHEMIN_RCODESIGN=$(pwd)/$FICHIER
+          export VERSION_PARAMETRES=$(echo "$VERSION_GODOT" | awk -F'[.-]' '{
+              if ($1 == 3) print "3";
+              else if ($2 == 0) print $1;
+              else print $1"."$2
+          }')
+          export PARAMETRES_GODOT=$REPERTOIRE_DONNEES_EDITEUR/editor_settings-${VERSION_PARAMETRES}.tres
+          cat <<EOF > "$PARAMETRES_GODOT"
+          [gd_resource type="EditorSettings"]
+
+          [resource]
+          export/macos/rcodesign = "$CHEMIN_RCODESIGN"
+          EOF
+
+          export CHEMIN_FICHIER_API=/tmp/$NOM_CLE_API_DE_NOTARISATION
+          echo $GODOT_MACOS_NOTARIZATION_API_KEY | base64 --decode > $CHEMIN_FICHIER_API
+          echo "GODOT_MACOS_NOTARIZATION_API_KEY=$CHEMIN_FICHIER_API" >> $CM_ENV
+      - *exportation_projet
+      - *collecte_fichiers
+
+    artifacts:
+      - *recuperation_exportation
+  
+  # Config: rcedit | Signature de code
+  flux-godot-windows-desktop:
+    name: Exportation vers Windows Desktop
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    working_directory: /Users/builder/Downloads
+    
+    environment:
+      groups:
+        - identifiants_windows
+      vars:
+        <<: *variables_godot
+        FICHIER_DE_SORTIE: test.exe
+        NOM_DU_PREREGLAGE: Windows Desktop
+        URL_RCEDIT: https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe
+
+    scripts:
+      - *installation_godot
+      - *installation_modeles_exportation
+      - name: Configuration de l'exportation
+        script: |
+          softwareupdate --install-rosetta --agree-to-license
+          brew install --cask wine-stable
+          curl -L "$URL_RCEDIT" -o "rcedit-x64.exe"
+          chmod +x rcedit-x64.exe
+          brew install osslsigncode
+          export CHEMIN_OUTIL_DE_SIGNATURE=$(which osslsigncode)
+          export CHEMIN_RCEDIT=$(pwd)/rcedit-x64.exe
+          export CHEMIN_WINE=$(which wine)
+          export VERSION_PARAMETRES=$(echo "$VERSION_GODOT" | awk -F'[.-]' '{
+              if ($1 == 3) print "3";
+              else if ($2 == 0) print $1;
+              else print $1"."$2
+          }')
+          export PARAMETRES_GODOT=${REPERTOIRE_DONNEES_EDITEUR}/editor_settings-${VERSION_PARAMETRES}.tres
+          cat <<EOF > "$PARAMETRES_GODOT"
+          [gd_resource type="EditorSettings"]
+
+          [resource]
+          export/windows/rcedit = "$CHEMIN_RCEDIT"
+          export/windows/wine = "$CHEMIN_WINE"
+          export/windows/signtool = "$CHEMIN_OUTIL_DE_SIGNATURE"
+          EOF
+          
+          export CHEMIN_CERTIFICAT=/tmp/$NOM_FICHIER_CERTIFICAT
+          echo $GODOT_WINDOWS_CODESIGN_IDENTITY | base64 --decode > $CHEMIN_CERTIFICAT
+          echo "GODOT_WINDOWS_CODESIGN_IDENTITY=$CHEMIN_CERTIFICAT" >> $CM_ENV
+      - *exportation_projet
+      - *collecte_fichiers
+
+    artifacts:
+      - *recuperation_exportation
+  
+  compilation-modeles-exportation-android:
+    name: Compilation des modèles d'exportation Android
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    working_directory: /Users/builder/Downloads
+
+    environment:
+      vars:
+        BRANCHE_GODOT: 4.4.1-stable
+        DOSSIER_COLLECTE_FICHIERS: /Users/builder/Downloads/templates
+
+    scripts:
+      - name: Configuration
+        script: |
+          mkdir -p $DOSSIER_COLLECTE_FICHIERS
+          
+          git clone https://github.com/godotengine/godot.git -b $BRANCHE_GODOT
+          export DOSSIER_CODE_SOURCE=$(pwd)/godot
+          echo "DOSSIER_COMPILATION=$DOSSIER_CODE_SOURCE" >> $CM_ENV
+          echo "DOSSIER_RESULTATS_COMPILATION=$DOSSIER_CODE_SOURCE/bin" >> $CM_ENV
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $CM_ENV
+          
+          pip install scons
+          cd $DOSSIER_CODE_SOURCE
+          scons platform=list
+        
+      - name: Compilation
+        script: |
+          cd $DOSSIER_COMPILATION
+          export SCRIPT_AES256_ENCRYPTION_KEY="aeb1bc56aaf580cc31784e9c41551e9ed976ecba10d315db591e749f3f64890f"
+          scons platform=android target=template_release arch=arm32
+          scons platform=android target=template_release arch=arm64
+          scons platform=android target=template_release arch=x86_32
+          scons platform=android target=template_release arch=x86_64 generate_apk=yes
+      
+      - name: Collecte des fichiers
+        script: zip -r $DOSSIER_COLLECTE_FICHIERS/export_templates.zip $DOSSIER_RESULTATS_COMPILATION
+    
+    artifacts:
+      - $DOSSIER_COLLECTE_FICHIERS/*.zip

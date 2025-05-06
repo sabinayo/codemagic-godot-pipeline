@@ -1,0 +1,45 @@
+# Auteur : https://github.com/sabinayo
+# Documentation : https://sabinayo.github.io/codemagic-godot-pipeline/fr/workflows/compiling.html
+# Rapport d'erreur : https://github.com/sabinayo/codemagic-godot-pipeline/issues
+
+workflows:
+  compilation-modeles-exportation-android:
+    name: Compilation des modèles d'exportation Android
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    working_directory: /Users/builder/Downloads
+
+    environment:
+      vars:
+        BRANCHE_GODOT: 4.4.1-stable
+        DOSSIER_COLLECTE_FICHIERS: /Users/builder/Downloads/templates
+
+    scripts:
+      - name: Configuration
+        script: |
+          mkdir -p $DOSSIER_COLLECTE_FICHIERS
+          
+          git clone https://github.com/godotengine/godot.git -b $BRANCHE_GODOT
+          export DOSSIER_CODE_SOURCE=$(pwd)/godot
+          echo "DOSSIER_COMPILATION=$DOSSIER_CODE_SOURCE" >> $CM_ENV
+          echo "DOSSIER_RESULTATS_COMPILATION=$DOSSIER_CODE_SOURCE/bin" >> $CM_ENV
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $CM_ENV
+          
+          pip install scons
+          cd $DOSSIER_CODE_SOURCE
+          scons platform=list
+        
+      - name: Compilation
+        script: |
+          cd $DOSSIER_COMPILATION
+          export SCRIPT_AES256_ENCRYPTION_KEY="aeb1bc56aaf580cc31784e9c41551e9ed976ecba10d315db591e749f3f64890f"
+          scons platform=android target=template_release arch=arm32
+          scons platform=android target=template_release arch=arm64
+          scons platform=android target=template_release arch=x86_32
+          scons platform=android target=template_release arch=x86_64 generate_apk=yes
+      
+      - name: Collecte des fichiers
+        script: zip -r $DOSSIER_COLLECTE_FICHIERS/export_templates.zip $DOSSIER_RESULTATS_COMPILATION
+    
+    artifacts:
+      - $DOSSIER_COLLECTE_FICHIERS/*.zip

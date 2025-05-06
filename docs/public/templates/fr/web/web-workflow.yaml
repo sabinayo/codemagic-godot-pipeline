@@ -1,0 +1,78 @@
+# Auteur : https://github.com/sabinayo
+# Documentation : https://sabinayo.github.io/codemagic-godot-pipeline/fr/workflows/web-workflow.html
+# Rapport d'erreur : https://github.com/sabinayo/codemagic-godot-pipeline/issues
+
+definitions:
+  environment:
+    environnement_godot:
+      vars: &variables_godot
+        VERSION_GODOT: 4.4.1-stable
+        TYPE_EXPORTATION: debug
+        REPERTOIRE_EXPORTATION: /Users/builder/Downloads/builds/
+        URL_GODOT: https://github.com/godotengine/godot-builds/releases/download
+        GODOT: Godot.app/Contents/MacOS/Godot
+        REPERTOIRE_PROJET: /Users/builder/clone
+        REPERTOIRE_DONNEES_EDITEUR: /Users/builder/Library/Application Support/Godot
+        REPERTOIRE_MODELES_EXPORTATION: $REPERTOIRE_DONNEES_EDITEUR/export_templates
+
+  scripts:
+    - &installation_godot
+      name: Installation de Godot
+      script: |
+        export FICHIER=Godot_v${VERSION_GODOT}_macos.universal.zip
+        export URL=$URL_GODOT/$VERSION_GODOT/$FICHIER
+        curl -L "$URL" -o "$FICHIER" && unzip "$FICHIER"
+        rm "$FICHIER"
+    
+    - &installation_modeles_exportation
+      name: Installation des modèles d'exportation
+      script: |
+        export FICHIER=Godot_v${VERSION_GODOT}_export_templates.tpz
+        export URL=$URL_GODOT/$VERSION_GODOT/$FICHIER
+        curl -L "$URL" -o "$FICHIER" && unzip "$FICHIER"
+        rm "$FICHIER"
+
+        export VERSION_MODELES=$(echo "$VERSION_GODOT" | sed 's/-/./')
+        export CHEMIN_MODELES=${REPERTOIRE_MODELES_EXPORTATION}/$VERSION_MODELES
+        mkdir -p "$CHEMIN_MODELES" && mv templates/* "$CHEMIN_MODELES"
+        rmdir templates
+        
+        mkdir -p "$REPERTOIRE_EXPORTATION"
+    
+    - &exportation_projet
+      name: Exportation du Projet
+      script: |
+        export CHEMIN_EXPORTATION=$REPERTOIRE_EXPORTATION/$FICHIER_DE_SORTIE
+        "$GODOT" --headless --path "$REPERTOIRE_PROJET" --export-$TYPE_EXPORTATION "$NOM_DU_PREREGLAGE" "$CHEMIN_EXPORTATION"
+        echo "command: " $GODOT "--headless --path" $REPERTOIRE_PROJET "--export-"$TYPE_EXPORTATION "$NOM_DU_PREREGLAGE" $CHEMIN_EXPORTATION
+
+    - &collecte_fichiers
+      name: Collecte des fichiers
+      script: |
+        zip -r "$REPERTOIRE_EXPORTATION/Godot_v${VERSION_GODOT}-${NOM_DU_PREREGLAGE}_export.zip" $REPERTOIRE_EXPORTATION
+  
+  artifacts:
+    - &recuperation_exportation $REPERTOIRE_EXPORTATION/*.zip
+
+
+workflows:
+  flux-godot-web:
+    name: Exportation vers le Web
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    working_directory: /Users/builder/Downloads
+    
+    environment:
+      vars:
+        <<: *variables_godot
+        FICHIER_DE_SORTIE: index.html
+        NOM_DU_PREREGLAGE: Web
+    
+    scripts:
+      - *installation_godot
+      - *installation_modeles_exportation
+      - *exportation_projet
+      - *collecte_fichiers
+
+    artifacts:
+      - *recuperation_exportation

@@ -1,0 +1,78 @@
+# Author: https://github.com/sabinayo
+# Documentation: https://sabinayo.github.io/codemagic-godot-pipeline/workflows/windows-desktop-workflow.html
+# Error report: https://github.com/sabinayo/codemagic-godot-pipeline/issues
+
+definitions:
+  environment:
+    godot_environment:
+      vars: &godot_variables
+        GODOT_VERSION: 4.4.1-stable
+        EXPORT_TYPE: debug
+        BUILD_DIRECTORY: /Users/builder/Downloads/builds/
+        GODOT_URL: https://github.com/godotengine/godot-builds/releases/download
+        GODOT: Godot.app/Contents/MacOS/Godot
+        PROJECT_PATH: /Users/builder/clone
+        EDITOR_DATA_DIRECTORY: /Users/builder/Library/Application Support/Godot
+        EXPORT_TEMPLATES_DIRECTORY: $EDITOR_DATA_DIRECTORY/export_templates
+  
+  scripts:
+    - &install_godot
+      name: Godot Installation
+      script: |
+        export FILE=Godot_v${GODOT_VERSION}_macos.universal.zip
+        export URL=${GODOT_URL}/${GODOT_VERSION}/${FILE}
+        curl -L "$URL" -o "$FILE" && unzip "$FILE"
+        rm "$FILE"
+    
+    - &install_godot_export_templates
+      name: Export templates installation
+      script: |
+        export FILE=Godot_v${GODOT_VERSION}_export_templates.tpz
+        export URL=${GODOT_URL}/${GODOT_VERSION}/${FILE}
+        curl -L "$URL" -o "$FILE" && unzip "$FILE"
+        rm "$FILE"
+
+        export TEMPLATES_VERSION=$(echo "$GODOT_VERSION" | sed 's/-/./')
+        export TEMPLATES_PATH=${DOSSIER_TEMPLATES}/$TEMPLATES_VERSION
+        mkdir -p "$TEMPLATES_PATH" && mv templates/* "$TEMPLATES_PATH"
+        rmdir templates
+        
+        mkdir -p "$BUILD_DIRECTORY"
+    
+    - &export_project
+      name: Project export
+      script: |
+        export EXPORT_PATH=$BUILD_DIRECTORY/$OUTPUT_FILE
+        "$GODOT" --headless --path "$PROJECT_PATH" --export-$EXPORT_TYPE "$EXPORT_PRESET" "$EXPORT_PATH"
+        echo "command: " $GODOT "--headless --path" $PROJECT_PATH "--export-"$EXPORT_TYPE "$EXPORT_PRESET" $EXPORT_PATH
+    
+    - &gather_files
+      name: File collection
+      script: |
+        zip -r "$BUILD_DIRECTORY/Godot_v${GODOT_VERSION}-${EXPORT_PRESET}_export.zip" $BUILD_DIRECTORY
+
+  artifacts:
+    - &zipped_export $BUILD_DIRECTORY/*.zip
+
+
+workflows:
+  godot-windows-desktop-workflow:
+    name: Windows Desktop Export
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    working_directory: /Users/builder/Downloads
+    
+    environment:
+      vars:
+        <<: *godot_variables
+        OUTPUT_FILE: test.exe
+        EXPORT_PRESET: Windows Desktop
+    
+    scripts:
+      - *install_godot
+      - *install_godot_export_templates
+      - *export_project
+      - *gather_files
+
+    artifacts:
+      - *zipped_export
